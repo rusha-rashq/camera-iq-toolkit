@@ -233,3 +233,4 @@ under the same light) before relying on the thresholds.
 `camera_iq/`: `charts.py` (render, detect), `export.py` (print files), `loading.py`, `mtf.py`, `color.py`,
 `analysis.py` (colour, noise), `pipeline.py`, `report.py`, `config.py`, `synthetic.py`, `cli.py`.
 `tests/`: unit and end-to-end tests, `mtf_table.py`, `data/`. `PLAN.md`: design decisions.
+`DEVLOG.md`: development log, including where the agent's output or the plan needed correcting.
