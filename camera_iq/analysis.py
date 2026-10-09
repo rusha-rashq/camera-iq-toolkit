@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .charts import MID_GREY, NEUTRAL, PATCH_SRGB, colour_chart, patch_polygons, polygon_mask
+from .charts import MID_GREY, PATCH_SRGB, WB_PATCHES, colour_chart, patch_polygons, polygon_mask
 from .color import ciede2000, linear_to_xyz, srgb_to_lab, srgb_to_linear, xyz_to_lab
 
 LUMA = np.array([0.2126729, 0.7151522, 0.0721750])
@@ -21,7 +21,7 @@ class ColourResult:
     patch_rgb: np.ndarray   # (24, 3) mean linear RGB, before gain
     delta_e: np.ndarray     # (24,) CIEDE2000 after gain
     mean_delta_e: float
-    wb_error: float         # mean chroma sqrt(a*^2 + b*^2) of the neutral patches, after gain
+    wb_error: float         # mean chroma sqrt(a*^2 + b*^2) of the four middle neutrals, after gain
     neutral_chroma: np.ndarray
 
 
@@ -33,7 +33,7 @@ def colour_accuracy(linear, H, inner=INNER):
     gain = float((ref[mid] * rgb[mid]).sum() / (rgb[mid] ** 2).sum())    # least squares, one scalar
     lab = xyz_to_lab(linear_to_xyz(rgb * gain))
     de = np.asarray(ciede2000(lab, srgb_to_lab(PATCH_SRGB)))
-    chroma = np.hypot(lab[list(NEUTRAL), 1], lab[list(NEUTRAL), 2])
+    chroma = np.hypot(lab[list(WB_PATCHES), 1], lab[list(WB_PATCHES), 2])
     return ColourResult(gain, rgb, de, float(de.mean()), float(chroma.mean()), chroma)
 
 

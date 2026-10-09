@@ -1,8 +1,12 @@
+import io
+
 import cv2
 import numpy as np
 import pytest
 
 from camera_iq import analysis, charts
+from PIL import Image
+
 from camera_iq.loading import UnsupportedImage, load_capture_bytes
 
 PPU = 6.0
@@ -36,6 +40,15 @@ def test_colour_cast_shows_in_wb_and_delta_e():
     assert analysis.colour_accuracy(capture(gain=0.5), H).wb_error < 0.05
 
 
+def test_wb_uses_middle_four_neutrals():
+    img = capture()
+    # corrupt white and black only: WB error must not move
+    for i in (18, 23):
+        x0, y0, x1, y1 = CHART.patches[i]
+        img[int(y0 * PPU):int(y1 * PPU), int(x0 * PPU):int(x1 * PPU)] *= (1.3, 1.0, 0.7)
+    assert analysis.colour_accuracy(img, H).wb_error < 0.05
+
+
 def test_noise_snr_and_plane_removal():
     sigma, gain = 0.01, 0.5
     for tilt in (0.0, 0.3):          # 30% shading across the frame must not count as noise
@@ -67,3 +80,45 @@ def test_loading_rejects_16_bit():
     ok, png = cv2.imencode(".png", np.full((8, 8, 3), 1000, np.uint16))
     with pytest.raises(UnsupportedImage):
         load_capture_bytes(png)
+
+
+def test_p3_tagged_image_converted_to_srgb():
+    from icc import P3_XY, make_profile, rgb_to_xyz_d65
+    from camera_iq.color import linear_to_srgb, srgb_to_linear
+    p3_codes = np.array([[0.85, 0.30, 0.25], [0.30, 0.65, 0.35], [0.5, 0.5, 0.5], [0.95, 0.80, 0.20]])
+    img = np.tile((p3_codes * 255).round().astype(np.uint8)[:, None, :], (1, 8, 1))
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, "PNG", icc_profile=make_profile("Display P3 test"))
+    cap = load_capture_bytes(buf.getvalue())
+    assert cap.meta.profile == "Display P3 test"
+
+    to_xyz_p3 = rgb_to_xyz_d65(P3_XY)
+    to_xyz_srgb = rgb_to_xyz_d65(((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)))
+    lin_p3 = srgb_to_linear(img[:, 0] / 255.0)
+    expect = linear_to_srgb(np.clip(np.linalg.solve(to_xyz_srgb, to_xyz_p3 @ lin_p3.T).T, 0, 1)) * 255
+    assert np.abs(cap.srgb8[:, 0].astype(float) - expect).max() < 2.5
+    assert np.abs(cap.srgb8[:, 0].astype(int) - img[:, 0]).max() > 10      # i.e. it really changed
+
+
+def test_srgb_tagged_and_untagged_pass_through():
+    img = np.random.default_rng(0).integers(0, 256, (16, 16, 3), dtype=np.uint8)
+    from PIL import ImageCms
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, "PNG", icc_profile=ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    assert (load_capture_bytes(buf.getvalue()).srgb8 == img).all()
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, "PNG")
+    assert (load_capture_bytes(buf.getvalue()).srgb8 == img).all()
+
+
+def test_exif_metadata_read():
+    im = Image.new("RGB", (16, 16), (90, 90, 90))
+    exif = Image.Exif()
+    exif[271], exif[272] = "Apple", "Apple iPhone 15 Pro"
+    exif.get_ifd(0x8769).update({33434: 1 / 120, 34855: 64, 37386: 6.86, 33437: 1.78})
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", exif=exif)
+    m = load_capture_bytes(buf.getvalue()).meta
+    assert m.camera == "Apple iPhone 15 Pro" and m.iso == 64
+    assert m.exposure_time == pytest.approx(1 / 120, rel=1e-3)
+    assert m.focal_length == pytest.approx(6.86, rel=1e-3) and m.f_number == pytest.approx(1.78, rel=1e-3)

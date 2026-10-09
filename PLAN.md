@@ -22,11 +22,11 @@
 - Rectify only to locate ROIs. MTF is computed on the original un-warped pixels.
 
 **Loading**
-- 8-bit sRGB only; apply EXIF orientation; linearise with the sRGB curve.
+- 8-bit only; apply EXIF orientation; convert any embedded ICC profile (e.g. iPhone Display P3) to sRGB, assume sRGB if untagged; read EXIF camera/ISO/exposure/focal length for the report; linearise with the sRGB curve.
 
 **Colour**
 - Normalise exposure with a single gain matched on the mid-grey patches before computing ΔE00.
-- WB error = chroma of the neutral patches' a*/b*.
+- WB error = chroma of a*/b* on the four middle neutrals (white may clip, black is noisy).
 
 **Noise**
 - Fit and remove a plane within each patch before computing SNR.

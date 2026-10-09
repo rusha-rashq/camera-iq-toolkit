@@ -31,6 +31,7 @@ PATCH_SRGB = np.array([
     (243, 243, 243), (200, 200, 200), (160, 160, 160), (122, 122, 122), (85, 85, 85), (52, 52, 52),
 ], dtype=float) / 255
 NEUTRAL = tuple(range(18, 24))
+WB_PATCHES = NEUTRAL[1:5]        # white may clip and black is noisy, so white balance uses the middle four
 MID_GREY = (20, 21)             # used for the single exposure gain
 
 

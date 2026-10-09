@@ -1,10 +1,17 @@
-"""Image loading: 8-bit sRGB only, EXIF orientation applied, returned as sRGB and linear light."""
+"""Image loading: 8-bit, EXIF orientation applied, embedded ICC profile converted to sRGB,
+EXIF capture metadata read, returned as sRGB and linear light. Untagged images are assumed sRGB."""
+import io
+import warnings
 from dataclasses import dataclass
+from fractions import Fraction
 
-import cv2
 import numpy as np
+from PIL import Image, ImageCms, ImageOps
 
 from .color import srgb_to_linear
+
+_SRGB = ImageCms.createProfile("sRGB")
+_EXIF_IFD = 0x8769
 
 
 class UnsupportedImage(ValueError):
@@ -12,33 +19,88 @@ class UnsupportedImage(ValueError):
 
 
 @dataclass
+class CaptureMeta:
+    camera: str | None = None           # "Make Model"
+    iso: int | None = None
+    exposure_time: float | None = None  # seconds
+    focal_length: float | None = None   # mm
+    f_number: float | None = None
+    profile: str | None = None          # description of the embedded ICC profile, if any
+
+
+@dataclass
 class Capture:
     srgb8: np.ndarray       # (H, W, 3) uint8, RGB, display-encoded; used for chart detection
     linear: np.ndarray      # (H, W, 3) float32, sRGB curve removed; used for all measurements
+    meta: CaptureMeta
 
 
-def _from_array(img):
-    if img is None:
-        raise UnsupportedImage("could not decode image")
-    if img.dtype != np.uint8:
-        raise UnsupportedImage(f"only 8-bit images are supported, got {img.dtype}")
-    if img.ndim == 3 and img.shape[2] == 4:
-        img = img[:, :, :3]
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB if img.ndim == 3 else cv2.COLOR_GRAY2RGB)
-    lut = srgb_to_linear(np.arange(256) / 255).astype(np.float32)
-    return Capture(rgb, lut[rgb])
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 
-# IMREAD_COLOR applies EXIF orientation; ANYDEPTH keeps 16-bit data so we can reject it rather than
-# have it silently squashed to 8 bits. (IMREAD_UNCHANGED would skip the orientation.)
-_FLAGS = cv2.IMREAD_COLOR | cv2.IMREAD_ANYDEPTH
+def _read_meta(im):
+    exif = im.getexif()
+    ifd = exif.get_ifd(_EXIF_IFD) if exif else {}
+    camera = " ".join(str(exif.get(t)).strip() for t in (271, 272) if exif.get(t))
+    if camera:       # models often repeat the make ("Apple iPhone 15" vs make "Apple")
+        make, model = str(exif.get(271, "")).strip(), str(exif.get(272, "")).strip()
+        camera = model if model.lower().startswith(make.lower()) else camera
+    iso = ifd.get(34855)
+    iso = iso[0] if isinstance(iso, (tuple, list)) and iso else iso
+    return CaptureMeta(camera or None, int(iso) if iso else None, _num(ifd.get(33434)),
+                       _num(ifd.get(37386)), _num(ifd.get(33437)))
 
 
-def load_capture(path):
-    """The file is assumed to be sRGB: embedded ICC profiles are not read."""
-    data = np.fromfile(path, np.uint8)       # imread chokes on non-ASCII paths on some platforms
-    return load_capture_bytes(data)
+def _to_srgb(im, meta):
+    """Convert to 8-bit sRGB using the embedded profile (if any); drops alpha."""
+    icc = im.info.get("icc_profile")
+    if im.mode in ("RGBA", "LA", "P", "L", "1"):
+        im = im.convert("RGB")
+    if im.mode != "RGB":
+        raise UnsupportedImage(f"unsupported image mode {im.mode}")
+    if not icc:
+        return im
+    try:
+        src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        meta.profile = ImageCms.getProfileDescription(src).strip() or "unnamed profile"
+        if src.profile.xcolor_space.strip() != "RGB":
+            raise ImageCms.PyCMSError("not an RGB profile")
+        if "srgb" in meta.profile.lower():
+            return im
+        return ImageCms.profileToProfile(im, src, _SRGB, renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                                         outputMode="RGB")
+    except ImageCms.PyCMSError as e:
+        warnings.warn(f"could not use embedded ICC profile ({e}); assuming sRGB")
+        return im
+
+
+def _reject_deep(data, im):
+    if im.mode.startswith(("I", "F")) or ";16" in im.mode:
+        raise UnsupportedImage(f"only 8-bit images are supported, got mode {im.mode}")
+    # PIL silently reduces 16-bit RGB PNGs to 8 bits; read the bit depth from the header instead.
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and data[24] != 8 and im.mode != "P":
+        raise UnsupportedImage(f"only 8-bit images are supported, PNG has {data[24]} bits per channel")
 
 
 def load_capture_bytes(data):
-    return _from_array(cv2.imdecode(np.frombuffer(data, np.uint8), _FLAGS))
+    data = bytes(data)
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+    except Exception as e:
+        raise UnsupportedImage(f"could not decode image: {e}") from e
+    _reject_deep(data, im)
+    meta = _read_meta(im)
+    im = ImageOps.exif_transpose(im)        # keeps the ICC profile in .info
+    rgb = np.asarray(_to_srgb(im, meta))
+    lut = srgb_to_linear(np.arange(256) / 255).astype(np.float32)
+    return Capture(rgb, lut[rgb], meta)
+
+
+def load_capture(path):
+    with open(path, "rb") as f:
+        return load_capture_bytes(f.read())
