@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camera-iq"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "opencv-python-headless"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+camera-iq = "camera_iq.cli:main"
+
+[tool.setuptools]
+packages = ["camera_iq"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
