@@ -4,10 +4,10 @@
 1. Scaffold — done
 2. Colour science (sRGB/Lab, CIEDE2000) — done
 3. Slanted-edge MTF (e-SFR) — done
-4. `charts.py`: chart rendering and detection
-5. Loading (`io`), colour analysis, noise analysis
-6. Regression comparison and report
-7. `synthetic.py` end-to-end tests, CLI
+4. `charts.py`: chart rendering and detection — done (plus print export)
+5. Loading, colour analysis, noise analysis — done
+6. Regression comparison (`pipeline.py`, `config.py`) and SVG report (`report.py`) — done
+7. `synthetic.py` end-to-end tests, `camera-iq analyze` CLI — done
 
 ## Decisions
 
