@@ -124,3 +124,80 @@ def test_folder_with_only_one_chart_notes_the_other(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(FileNotFoundError):
         pipeline.analyze_path(tmp_path / "empty")
+
+
+def test_saturated_edge_is_flagged():
+    r = result(blur_sigma=0.8, gain=1.5)
+    assert any("saturated" in n for n in r.notes)
+    assert not any("saturated" in n for n in result(blur_sigma=0.8).notes)
+
+
+def test_wrong_chart_is_not_matched():
+    # a colour chart must not be accepted as the slanted chart (the frame and paper alone correlate well)
+    s = synthetic.simulate([(COL, COL_QUAD)], shape=(620, 1200), background=0.0)
+    with pytest.raises(charts.ChartNotFound):
+        charts.detect_chart(s.srgb8, SL)
+
+
+# ---- units: cycles per pixel vs cycles per mm on the chart
+
+def test_edge_scales_similarity_and_perspective():
+    assert charts.edge_scales(SL, np.array([[4.0, 0, 30], [0, 4.0, 50], [0, 0, 1]])) == pytest.approx([4.0] * 4)
+    s = scene(blur_sigma=0.8)
+    Htrue = s.homographies["slanted"]
+    side = np.mean([np.linalg.norm(np.subtract(SL_QUAD[(i + 1) % 4], SL_QUAD[i])) for i in range(4)]) / 100
+    assert np.mean(charts.edge_scales(SL, Htrue)) == pytest.approx(side, rel=0.05)
+    # perspective: the edge nearer the camera (larger in the image) has the larger scale
+    quad = [(100, 100), (500, 100), (560, 480), (40, 480)]           # bottom wider than top
+    sc = charts.edge_scales(SL, synthetic.simulate([(SL, quad)], shape=(600, 700)).homographies["slanted"])
+    assert sc[2] > sc[0] * 1.15
+
+
+def test_mtf50_mm_is_px_times_scale():
+    r = result(blur_sigma=0.8)
+    m = r.mtf
+    assert len(m.edge_mtf50_mm) == 4
+    assert m.mtf50_mm == pytest.approx(m.mtf50 * m.px_per_mm, rel=0.02)
+    assert m.px_per_mm == pytest.approx(3.0, rel=0.1)                 # ~300 px frame side / 100 mm
+    assert m.freq_mm[-1] == pytest.approx(0.5 * m.px_per_mm)
+    # cycles/mm = cycles/px * px/mm, per edge
+    s = scene(blur_sigma=0.8)
+    cap = load_capture_bytes(_png_bytes(s.srgb8))
+    det = charts.detect_chart(cap.srgb8, SL)
+    for px, mm, sc in zip(pipeline_edge_mtf50s(cap, det), result(blur_sigma=0.8).mtf.edge_mtf50_mm, charts.edge_scales(SL, det.H)):
+        assert mm == pytest.approx(px * sc, rel=1e-6)
+
+
+def _png_bytes(srgb8):
+    buf = io.BytesIO()
+    Image.fromarray(srgb8).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def pipeline_edge_mtf50s(cap, det):
+    return pipeline._measure_mtf(cap, SL, det, []).edge_mtf50
+
+
+def test_same_optics_at_two_resolutions_agree_in_mm_not_in_px():
+    """Same physical blur and framing, sensor with 2x the pixels: cycles/pixel halves, cycles/mm does not."""
+    lo = result("lo", blur_sigma=1.0)
+    s2 = synthetic.simulate([(SL, [(2 * x, 2 * y) for x, y in SL_QUAD]), (COL, [(2 * x, 2 * y) for x, y in COL_QUAD])],
+                            shape=(1240, 2400), blur_sigma=2.0)
+    hi = pipeline.analyze_capture(load_capture_bytes(_png_bytes(s2.srgb8)), "hi")
+    assert hi.mtf.mtf50 / lo.mtf.mtf50 == pytest.approx(0.5, rel=0.08)
+    assert hi.mtf.mtf50_mm / lo.mtf.mtf50_mm == pytest.approx(1.0, rel=0.06)
+    assert pipeline.compare(lo, hi) == []          # a px-based flag would have fired: -50%
+    soft = result("soft", blur_sigma=1.6)
+    assert [f.metric for f in pipeline.compare(lo, soft)] == ["mtf50"]
+
+
+def test_peak_mtf_shows_sharpening_overshoot():
+    import cv2
+    plain = result(blur_sigma=1.2).mtf
+    s = scene(blur_sigma=1.2).srgb8
+    sharp8 = np.clip(s.astype(float) + 1.5 * (s - cv2.GaussianBlur(s, (0, 0), 1.5).astype(float)), 0, 255).astype(np.uint8)
+    sharp = pipeline.analyze_capture(load_capture_bytes(_png_bytes(sharp8)), "sharp").mtf
+    assert plain.peak < 1.02 and sharp.peak > 1.08
+    html = report.render_report([result("a", blur_sigma=1.2), pipeline.analyze_capture(load_capture_bytes(_png_bytes(sharp8)), "b")])
+    assert ">1.25<" in html          # y-axis extends above 1
+    assert "Peak MTF" in html and "MTF50 (cy/mm)" in html

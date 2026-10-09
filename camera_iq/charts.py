@@ -136,6 +136,21 @@ def edge_rois(chart, H, half_len=10.0, half_wid=6.0):
     return out
 
 
+def edge_scales(chart, H, step=1.0):
+    """Image pixels per chart unit (mm when printed at 100%) across each dark-square edge, i.e. along the
+    edge normal, at the edge midpoint. Local, so it accounts for perspective foreshortening."""
+    (centre, side, ang, _), = chart.squares
+    corners = _square_corners(centre, side, ang)
+    out = []
+    for i in range(4):
+        a, b = corners[i], corners[(i + 1) % 4]
+        mid, d = (a + b) / 2, (b - a) / np.linalg.norm(b - a)
+        n = np.array([-d[1], d[0]])
+        p0, p1 = apply_h(H, [mid - n * step / 2, mid + n * step / 2])
+        out.append(float(np.linalg.norm(p1 - p0) / step))
+    return out
+
+
 def patch_polygons(chart, H, inner=0.6):
     """Image-space quads (n, 4, 2) of the central `inner` fraction (linear, per side) of each patch."""
     polys = []
@@ -206,6 +221,9 @@ def detect_chart(image, chart, verify_px_per_unit=3.0, min_score=0.75):
     inner = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
     ref = cv2.cvtColor(np.round(render_srgb(chart, verify_px_per_unit) * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
     refz = (ref - ref.mean()) / ref.std()
+    m = int(round(FRAME * verify_px_per_unit))
+    inner_ref = ref[m:-m, m:-m].astype(float)
+    inner_z = (inner_ref - inner_ref.mean()) / inner_ref.std()
     S = np.diag([verify_px_per_unit, verify_px_per_unit, 1.0])
 
     hyps = []
@@ -221,6 +239,12 @@ def detect_chart(image, chart, verify_px_per_unit=3.0, min_score=0.75):
                 if warped.std() < 1e-6:
                     continue
                 score = float(((warped - warped.mean()) / warped.std() * refz).mean())
+                # The frame and the paper dominate the whole-chart score, so any dark frame around a
+                # bright page scores well. Also require the content inside the frame to match.
+                core = warped[m:-m, m:-m].astype(float)
+                if core.std() < 1e-6:
+                    continue
+                score = min(score, float(((core - core.mean()) / core.std() * inner_z).mean()))
                 hyps.append((score, H))
     if not hyps or max(h[0] for h in hyps) < min_score:
         raise ChartNotFound(f"no candidate matched the {chart.name} chart (best score "

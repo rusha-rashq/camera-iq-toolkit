@@ -65,5 +65,5 @@ def noise(linear, H, inner=INNER):
         s = np.sqrt((res ** 2).sum(axis=0) / (len(xs) - k))
         mu = v.mean(axis=0)
         mean[i], sigma[i], luma_mean[i], luma_sigma[i] = mu[:3], s[:3], mu[3], s[3]
-    with np.errstate(divide="ignore"):
+    with np.errstate(divide="ignore", invalid="ignore"):    # clipped-to-black channels give 0/0 = nan
         return NoiseResult(mean, sigma, 20 * np.log10(mean / sigma), 20 * np.log10(luma_mean / luma_sigma))

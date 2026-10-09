@@ -39,7 +39,7 @@ Needs Python 3.10+. Dependencies: numpy, scipy, opencv-python-headless, pillow, 
    measurement. EXIF is taken from the first image, and a note is added if the other images differ in
    camera, ISO or focal length. Prints `REGRESSION ...` lines and exits 1 if any capture is flagged.
 
-   Thresholds default to MTF50 down >10% and mean ΔE00 up >1.5; override with `--mtf-drop` / `--de-rise`
+   Thresholds default to MTF50 (cycles/mm) down >10% and mean ΔE00 up >1.5; override with `--mtf-drop` / `--de-rise`
    or edit `camera_iq/config.py`.
 
 Supported inputs: 8-bit JPEG, PNG, TIFF and HEIC/HEIF (iPhone default). Embedded ICC profiles
@@ -67,7 +67,12 @@ regions of interest: MTF is computed on the original, un-warped pixels.
 **MTF** (`mtf.py`). Slanted-edge e-SFR on each of the four edges (luma, linear light): per-row edge
 centroids → robust line fit → project pixels on the edge normal and bin at 0.25 px (4× oversampling) →
 edge spread function → differentiate → Hamming window → FFT. MTF50 is the first crossing of 0.5, averaged
-over the four edges. Units are cycles per pixel.
+over the four edges. It is reported both in cycles per pixel and in **cycles per mm on the chart**:
+the detected chart geometry gives the local image scale across each edge (pixels per chart unit,
+perspective included, with 1 unit = 1 mm when the chart is printed at 100%), and cycles/mm =
+cycles/pixel × pixels/mm. The regression flag uses cycles/mm so captures of different resolution
+(e.g. the 24 MP main camera vs the 12 MP 2× tele) compare directly. The report also shows peak MTF, the highest value of
+the curve above 0.02 cycles/pixel; values above 1 are sharpening overshoot.
 
 **Colour** (`analysis.py`). One exposure gain, fitted by least squares on the two mid-grey patches, is applied
 to all patches, then ΔE00 (Sharma et al. 2005) against the design values in D65 Lab. White-balance error
@@ -81,7 +86,7 @@ has the summary table, an MTF overlay and a tone curve of the grey patches.
 
 ## Verification
 
-Run `pytest` (119 tests). What is checked, and against what:
+Run `pytest` (125 tests). What is checked, and against what:
 
 **CIEDE2000.** All 34 test pairs from Sharma, Wu & Dalal (2005), as published (`tests/data/sharma2005.txt`),
 agree to 5·10⁻⁵ (the published precision), in both argument orders and in the vectorised path. sRGB↔Lab is
@@ -142,21 +147,24 @@ that belongs to the measurement, not the camera, so it is removed. As I understa
 corrects only the derivative filter; I have not had the standard text to hand to confirm this, so check
 before citing numbers as ISO-conformant. The correction is small: it raises the MTF by 0.4% at 0.19
 cycles/px, 0.8% at 0.28 and 1.5% at 0.375, which moves MTF50 by about 0.3% when MTF50 is 0.19
-cycles/px and about 1% when it is 0.375. Results are in cycles/pixel, with no cycles/picture-height
-normalisation.
+cycles/px and about 1% when it is 0.375. Results are in cycles/pixel and cycles/mm on the chart, with no
+cycles/picture-height normalisation.
 
 ## Limitations
 
-- **Only synthetic images have been tested.** No real photograph has been through detection, MTF or the
-  thresholds yet; real lenses, glare, paper texture and phone processing may break assumptions.
+- **Little real-world testing.** Beyond the synthetic tests, it has only been run on one iPhone 15 Plus
+  session (4 captures, JPEG, Display P3; see Results). Other cameras, lighting, glare and print
+  quality are untested.
 - **Colour is relative to the chart's design values**, not to a measured print. Printer, ink, paper and
   the light on the chart all contribute to ΔE00. It is meaningful for comparing captures made under the
   same light of the same print, not as an absolute colour accuracy. Lab is computed against a D65
   white, so a non-D65 light shows up as white-balance error.
 - **Phone processing is in the measurement.** Sharpening, local tone mapping and noise reduction change
-  MTF, SNR and ΔE00; MTF values above 1 are clipped in the plot. Results compare pipelines, not sensors.
-- **MTF is in cycles/pixel**, so captures at different resolutions or crops are not directly comparable.
-  Edges that end up under 1° from an image axis (camera rolled ~4–6° against the chart) produce a
+  MTF, SNR and ΔE00; sharpening shows up as MTF above 1 (the plot shows it). Results compare pipelines, not sensors.
+- **Cycles/mm needs a known chart size and distance.** It assumes the chart was printed at 100% (a chart
+  shown on a screen has no such scale) and it is a measure at the chart, so it falls as the camera moves
+  away: compare captures taken from the same distance. At a different distance or crop, only
+  cycles/pixel at equal resolution is comparable. Edges that end up under 1° from an image axis (camera rolled ~4–6° against the chart) produce a
   warning and unreliable MTF.
 - **Noise SNR** is from a single frame with plane removal; fine-scale texture or compression artefacts
   count as noise, and a noiseless synthetic frame reports >100 dB.
@@ -170,13 +178,38 @@ normalisation.
 
 ## Results
 
-_To be filled in with real photos._
+Apple iPhone 15 Plus, main camera (26 mm equivalent) and 2× (52 mm), JPEG, Display P3 converted to sRGB. Edge
+and colour charts were shot separately and analysed as one capture per folder (`photos/<n>/edge.jpeg` +
+`colour.jpeg`). Chart scale assumes 1 chart unit = 1 mm. Baseline = `1-baseline`.
 
-| Capture | Device / settings | MTF50 (cy/px) | Mean ΔE00 | WB error | Grey SNR | Flags |
-|---|---|---|---|---|---|---|
-| | | | | | | |
+| Capture | Settings (edge shot) | px/mm | MTF50 (cy/mm) | MTF50 (cy/px) | Peak MTF | Mean ΔE00 | WB error | Grey SNR | Flags |
+|---|---|---|---|---|---|---|---|---|---|
+| 1-baseline | 26 mm, ISO 80, 1/121 s | 5.63 | 2.35 | 0.417 | 1.43 | 3.22 | 0.85 | 22.9 dB | baseline |
+| 2-repeat | same | 5.67 | 2.31 (−1.8%) | 0.407 | 1.36 | 3.32 | 0.97 | 26.1 dB | none |
+| 3-tele | 52 mm, ISO 32, 1/121 s | 7.54 | 2.53 (+7.6%) | 0.335 | 1.58 | 3.25 | 2.34 | 22.8 dB | none |
+| 4-dim | 26 mm, ISO 400, 1/60 s | 6.08 | 2.44 (+4.0%) | 0.402 | 1.25 | 2.99 | 2.01 | 20.5 dB | none |
 
-Repeatability (same scene shot N times): _MTF50 spread, ΔE00 spread_ → suggested thresholds: _tbd_
+In cycles/pixel the tele capture is 19.7% below the baseline, only because it has fewer, larger pixels across the
+chart; in cycles/mm it is 7.6% above. The peak MTF of 1.25–1.58 means the iPhone's JPEG pipeline sharpens
+strongly, which also raises MTF50: compare captures with each other, not with lens specifications. The
+tele and dim captures show a larger white-balance error (2.0–2.3 against 0.9–1.0), which could be a
+real colour shift or a change in the light between shots; not investigated. (ISO and exposure for the
+colour shots differ from the edge shots, e.g. tele ISO 50 vs 32; the table gives the edge shots.)
+
+### Repeatability (baseline vs repeat, same settings)
+
+| Shot distance | MTF50 baseline vs repeat | Notes |
+|---|---|---|
+| Far (chart frame ≈ 545 px wide) | −2.4% in cycles/px, −1.8% in cycles/mm; per edge +0.9%, −8.1%, −2.4%, +0.4% | all 4 edges measured on both shots; edge-to-edge spread 4–6% |
+| Close (chart frame ≈ 1200 px wide) | −34% | **not a real difference**: 2 of 4 edges failed on the baseline and one edge on the repeat read 0.011 cy/px, so the means are over different, partly broken edges |
+
+For the close shots the horizontal edges gave absurd fitted angles (41°, −53°); the ROI crops showed a
+fine pixel pattern in the white, consistent with photographing a screen, but I did not confirm the
+cause. Treat the close-shot figure as a failure case, not repeatability. For the far shots, ΔE00 differed by
+0.10 and WB error by 0.12, the exposure gain by 1.8%, and grey SNR by 3.2 dB between two identical shots,
+so SNR is the noisiest of the metrics. This is one pair of shots, so it supports "the 10% MTF50 / 1.5 ΔE00 defaults are not
+obviously too tight" but does not calibrate them; repeat the baseline several times (and the colour chart
+under the same light) before relying on the thresholds.
 
 ## Layout
 

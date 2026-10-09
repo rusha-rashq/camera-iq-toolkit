@@ -54,19 +54,30 @@ def _svg(label, pieces):
     return f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="{escape(label)}">{g}{refs}{body}</svg>'
 
 
+def _ticks(top, step):
+    return [round(i * step, 4) for i in range(int(round(top / step)) + 1)]
+
+
 def _mtf_svg(results):
-    xlim, ylim = (0, 0.5), (0, 1.0)
-    sx, sy, g, _, _ = _plot(xlim, ylim, [0, .1, .2, .3, .4, .5], [0, .25, .5, .75, 1], "spatial frequency (cycles/pixel)", "MTF", "")
-    refs = f'<line class="ref" x1="{L}" x2="{W - R}" y1="{sy(.5):.1f}" y2="{sy(.5):.1f}"/>'
+    shown = [r for r in results[:MAX_SERIES] if r.mtf is not None]
+    ytop = max([1.0] + [float(r.mtf.curve.max()) for r in shown])
+    ytop = np.ceil(ytop * 4) / 4                                    # room for sharpening overshoot
+    xtop = max([r.mtf.freq_mm[-1] for r in shown] or [1.0])         # Nyquist of the finest capture
+    xstep = next(st for st in (0.25, 0.5, 1, 2, 5, 10) if xtop / st <= 8)
+    xtop = np.ceil(xtop / xstep) * xstep
+    sx, sy, g, _, _ = _plot((0, xtop), (0, ytop), _ticks(xtop, xstep), _ticks(ytop, 0.25 if ytop <= 1.5 else 0.5),
+                            "spatial frequency on the chart (cycles/mm)", "MTF", "")
+    refs = (f'<line class="ref" x1="{L}" x2="{W - R}" y1="{sy(.5):.1f}" y2="{sy(.5):.1f}"/>'
+            + (f'<line class="ref" style="stroke-dasharray:1 4" x1="{L}" x2="{W - R}" y1="{sy(1):.1f}" y2="{sy(1):.1f}"/>' if ytop > 1 else ""))
     body = ""
     for k, r in enumerate(results[:MAX_SERIES]):
         if r.mtf is None:
             continue
-        f = np.linspace(0, 0.5, len(r.mtf.curve))
-        pts = " ".join(f"{sx(x):.1f},{sy(min(y, 1.0)):.1f}" for x, y in zip(f, r.mtf.curve))
-        body += (f'<g><title>{escape(r.name)}: MTF50 {r.mtf.mtf50:.3f} cycles/pixel</title>'
+        m = r.mtf
+        pts = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in zip(m.freq_mm, m.curve))
+        body += (f'<g><title>{escape(r.name)}: MTF50 {m.mtf50_mm:.2f} cycles/mm ({m.mtf50:.3f} cycles/pixel), peak MTF {m.peak:.2f}</title>'
                  f'<polyline class="line" style="stroke:var(--s{k + 1})" points="{pts}"/>'
-                 f'<circle cx="{sx(r.mtf.mtf50):.1f}" cy="{sy(.5):.1f}" r="4" style="fill:var(--s{k + 1});stroke:var(--surface);stroke-width:2"/></g>')
+                 f'<circle cx="{sx(m.mtf50_mm):.1f}" cy="{sy(.5):.1f}" r="4" style="fill:var(--s{k + 1});stroke:var(--surface);stroke-width:2"/></g>')
     return _svg("MTF overlay", (sx, sy, g, refs, body))
 
 
@@ -116,7 +127,7 @@ def render_report(results, thresholds=DEFAULT, title="Camera image quality repor
         notes = f'<br><span style="color:var(--ink2)">{escape("; ".join(r.notes))}</span>' if r.notes else ""
         swatch = f'<span class="sw" style="background:var(--s{k + 1})"></span>' if k < MAX_SERIES else ""
         rows.append(f"<tr><td>{swatch}{escape(r.name)}</td><td>{escape(cam)}</td>"
-                    f"<td>{_cell(r.mtf and r.mtf.mtf50, '{:.3f}')}</td><td>{_cell(r.colour and r.colour.mean_delta_e, '{:.2f}')}</td>"
+                    f"<td>{_cell(r.mtf and r.mtf.mtf50_mm, '{:.2f}')}</td><td>{_cell(r.mtf and r.mtf.mtf50, '{:.3f}')}</td><td>{_cell(r.mtf and r.mtf.peak, '{:.2f}')}</td><td>{_cell(r.colour and r.colour.mean_delta_e, '{:.2f}')}</td>"
                     f"<td>{_cell(r.colour and r.colour.wb_error, '{:.2f}')}</td><td>{_snr(r.grey_snr_db)}</td>"
                     f"<td>{status}{notes}</td></tr>")
     legend = "".join(f'<li><span class="sw" style="background:var(--s{k + 1})"></span>{escape(r.name)}{" (baseline)" if k == 0 else ""}</li>'
@@ -125,12 +136,12 @@ def render_report(results, thresholds=DEFAULT, title="Camera image quality repor
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{escape(title)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style></head><body><div class="viz">
 <h1>{escape(title)}</h1>
-<p>Baseline: {escape(base.name)}. Flags: MTF50 down more than {100 * thresholds.mtf50_drop:g}%, or mean ΔE00 up more than {thresholds.delta_e_rise:g}.</p>
+<p>Baseline: {escape(base.name)}. Flags: MTF50 (cycles/mm) down more than {100 * thresholds.mtf50_drop:g}%, or mean ΔE00 up more than {thresholds.delta_e_rise:g}.</p>
 <h2>Summary</h2>
-<table><thead><tr><th>Capture</th><th>Camera</th><th>MTF50 (cy/px)</th><th>Mean ΔE00</th><th>WB error (C*)</th><th>Grey SNR</th><th>Status</th></tr></thead>
+<table><thead><tr><th>Capture</th><th>Camera</th><th>MTF50 (cy/mm)</th><th>MTF50 (cy/px)</th><th>Peak MTF</th><th>Mean ΔE00</th><th>WB error (C*)</th><th>Grey SNR</th><th>Status</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table>{extra}
 <ul class="legend">{legend}</ul>
-<h2>MTF overlay</h2><p>Mean of the four slanted edges; dashed line marks MTF = 0.5, dot marks MTF50.</p>{_mtf_svg(results)}
+<h2>MTF overlay</h2><p>Mean of the four slanted edges, in cycles per mm on the chart so captures of different resolution compare directly. Dashed line marks MTF = 0.5, dot marks MTF50; values above 1 are sharpening overshoot.</p>{_mtf_svg(results)}
 <h2>Tone curve of the grey patches</h2><p>Six neutral patches, luma after the single exposure gain; dashed line is the ideal response.</p>{_tone_svg(results)}
 </div></body></html>
 """
