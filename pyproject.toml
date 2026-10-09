@@ -19,3 +19,4 @@ packages = ["camera_iq"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
