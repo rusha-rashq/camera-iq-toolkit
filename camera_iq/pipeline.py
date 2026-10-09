@@ -1,6 +1,7 @@
 """End to end: capture -> chart detection -> MTF / colour / noise -> regression flags vs a baseline."""
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -62,26 +63,61 @@ def _measure_mtf(capture, chart, det, notes):
     return MTFSummary(m50s, float(np.mean(m50s)), np.mean(curves, axis=0))
 
 
-def analyze_capture(capture, name):
-    """Measure whichever charts are visible in `capture`; missing charts are noted, not fatal."""
-    res = CaptureResult(name, capture.meta)
-    try:
-        chart = slanted_chart()
-        res.mtf = _measure_mtf(capture, chart, detect_chart(capture.srgb8, chart), res.notes)
-    except ChartNotFound:
-        res.notes.append("slanted chart not found")
-    try:
-        det = detect_chart(capture.srgb8, colour_chart())
-        res.colour = analysis.colour_accuracy(capture.linear, det.H)
-        res.noise = analysis.noise(capture.linear, det.H)
-    except ChartNotFound:
-        res.notes.append("colour chart not found")
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff"}
+
+
+def analyze_captures(items, name):
+    """One capture made of several images, e.g. the edge chart and the colour chart shot separately.
+    `items`: [(filename, Capture)]. Each chart is looked for in the images in order; the first image
+    where it is found supplies that measurement. Metadata comes from the first image."""
+    res = CaptureResult(name, items[0][1].meta)
+    src = {}
+    for chart_name, label in (("slanted", "MTF"), ("colour", "colour/noise")):
+        chart = slanted_chart() if chart_name == "slanted" else colour_chart()
+        for fname, cap in items:
+            try:
+                det = detect_chart(cap.srgb8, chart)
+            except ChartNotFound:
+                continue
+            if chart_name == "slanted":
+                res.mtf = _measure_mtf(cap, chart, det, res.notes)
+            else:
+                res.colour = analysis.colour_accuracy(cap.linear, det.H)
+                res.noise = analysis.noise(cap.linear, det.H)
+            src[label] = fname
+            break
+        else:
+            res.notes.append(f"{chart_name} chart not found" + (" in any image" if len(items) > 1 else ""))
+    if len(items) > 1:
+        res.notes.append("from " + ", ".join(f"{k}: {v}" for k, v in src.items()))
+        m0 = items[0][1].meta
+        for fname, cap in items[1:]:
+            diff = [f for f in ("camera", "iso", "focal_length") if getattr(cap.meta, f) != getattr(m0, f)]
+            if diff:
+                res.notes.append(f"{fname} differs from {items[0][0]} in {', '.join(diff)}")
     return res
 
 
-def analyze_file(path):
-    from pathlib import Path
-    return analyze_capture(load_capture(path), Path(path).name)
+def analyze_capture(capture, name):
+    return analyze_captures([(name, capture)], name)
+
+
+def image_files(directory):
+    return sorted(p for p in Path(directory).iterdir() if p.suffix.lower() in IMAGE_EXTS and not p.name.startswith("."))
+
+
+def analyze_path(path):
+    """A file is one capture; a directory is one capture made of all the images inside it."""
+    path = Path(path)
+    if path.is_dir():
+        files = image_files(path)
+        if not files:
+            raise FileNotFoundError(f"no images in {path}")
+        return analyze_captures([(f.name, load_capture(f)) for f in files], path.name)
+    return analyze_capture(load_capture(path), path.name)
+
+
+analyze_file = analyze_path
 
 
 @dataclass

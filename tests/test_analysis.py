@@ -122,3 +122,20 @@ def test_exif_metadata_read():
     assert m.camera == "Apple iPhone 15 Pro" and m.iso == 64
     assert m.exposure_time == pytest.approx(1 / 120, rel=1e-3)
     assert m.focal_length == pytest.approx(6.86, rel=1e-3) and m.f_number == pytest.approx(1.78, rel=1e-3)
+
+
+def test_heic_keeps_icc_profile_and_exif():
+    from icc import make_profile
+    img = np.tile(np.array([[0.85, 0.30, 0.25]]) * 255, (32, 48, 1)).round().astype(np.uint8)
+    exif = Image.Exif()
+    exif[271], exif[272] = "Apple", "iPhone 15 Pro"
+    exif.get_ifd(0x8769).update({33434: 1 / 60, 34855: 125, 37386: 6.86})
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, "HEIF", quality=95, exif=exif, icc_profile=make_profile("Display P3 test"))
+    cap = load_capture_bytes(buf.getvalue())
+    assert cap.meta.profile == "Display P3 test"
+    assert (cap.meta.camera, cap.meta.iso) == ("Apple iPhone 15 Pro", 125)
+    assert cap.meta.exposure_time == pytest.approx(1 / 60, rel=1e-3)
+    # P3 (0.85, 0.30, 0.25) is a more saturated red than sRGB can encode as-is: the red channel rises, green/blue fall
+    r, g, b = cap.srgb8[16, 24].astype(int)
+    assert r > 0.85 * 255 and g < 0.30 * 255 - 10 and b < 0.25 * 255

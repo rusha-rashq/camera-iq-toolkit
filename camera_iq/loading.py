@@ -1,4 +1,4 @@
-"""Image loading: 8-bit, EXIF orientation applied, embedded ICC profile converted to sRGB,
+"""Image loading (JPEG, PNG, TIFF, HEIC/HEIF): 8-bit, EXIF orientation applied, embedded ICC profile converted to sRGB,
 EXIF capture metadata read, returned as sRGB and linear light. Untagged images are assumed sRGB."""
 import io
 import warnings
@@ -7,6 +7,9 @@ from fractions import Fraction
 
 import numpy as np
 from PIL import Image, ImageCms, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()      # HEIC/HEIF, e.g. iPhone default; keeps ICC profile and EXIF
 
 from .color import srgb_to_linear
 
@@ -79,6 +82,8 @@ def _to_srgb(im, meta):
 
 
 def _reject_deep(data, im):
+    if im.info.get("bit_depth", 8) > 8:         # HEIF: pillow-heif would silently reduce it to 8 bits
+        raise UnsupportedImage(f"only 8-bit images are supported, got {im.info['bit_depth']}-bit")
     if im.mode.startswith(("I", "F")) or ";16" in im.mode:
         raise UnsupportedImage(f"only 8-bit images are supported, got mode {im.mode}")
     # PIL silently reduces 16-bit RGB PNGs to 8 bits; read the bit depth from the header instead.

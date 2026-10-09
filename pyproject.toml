@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "camera-iq"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = ["numpy", "scipy", "opencv-python-headless", "pillow"]
+dependencies = ["numpy", "scipy", "opencv-python-headless", "pillow", "pillow-heif"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

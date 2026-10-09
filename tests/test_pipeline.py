@@ -94,3 +94,33 @@ def test_cli_analyze_exit_code_and_report(tmp_path, capsys):
     assert "REGRESSION blurry.png: MTF50 down" in capsys.readouterr().out
     assert main(["analyze", paths[0], paths[0], "-o", str(out)]) == 0
     assert out.read_text().startswith("<!doctype html>")
+
+
+def _save(path, placements, **kw):
+    Image.fromarray(synthetic.simulate(placements, shape=(620, 1200), **kw).srgb8).save(path)
+
+
+def test_separate_shots_in_a_folder_form_one_capture(tmp_path):
+    for name, sigma in (("base", 0.8), ("soft", 1.5)):
+        d = tmp_path / name
+        d.mkdir()
+        _save(d / "1_edge.png", [(SL, SL_QUAD)], blur_sigma=sigma)
+        _save(d / "2_colour.png", [(COL, COL_QUAD)], blur_sigma=sigma)
+    one = pipeline.analyze_path(tmp_path / "base")
+    assert one.name == "base" and one.mtf is not None and one.colour is not None
+    assert one.mtf.mtf50 == pytest.approx(synthetic.expected_mtf50(0.8), rel=0.04)
+    assert "from MTF: 1_edge.png, colour/noise: 2_colour.png" in one.notes
+    assert not any("not found" in n for n in one.notes)
+
+    out = tmp_path / "r.html"
+    assert main(["analyze", str(tmp_path / "base"), str(tmp_path / "soft"), "-o", str(out)]) == 1
+    assert "baseline" in out.read_text()
+
+
+def test_folder_with_only_one_chart_notes_the_other(tmp_path):
+    _save(tmp_path / "edge.png", [(SL, SL_QUAD)])
+    r = pipeline.analyze_path(tmp_path)
+    assert r.mtf is not None and r.colour is None and "colour chart not found" in r.notes
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(FileNotFoundError):
+        pipeline.analyze_path(tmp_path / "empty")

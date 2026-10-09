@@ -11,7 +11,7 @@ def main(argv=None):
     ex.add_argument("outdir")
     ex.add_argument("--dpi", type=int, default=300, help="PNG resolution (default 300)")
     an = sub.add_parser("analyze", help="analyse captures; the first is the baseline the rest are compared against")
-    an.add_argument("images", nargs="+")
+    an.add_argument("captures", nargs="+", help="image files, or folders (one folder = one capture made of several images)")
     an.add_argument("-o", "--output", default="report.html")
     an.add_argument("--mtf-drop", type=float, default=DEFAULT.mtf50_drop, help="MTF50 drop fraction that flags (default %(default)s)")
     an.add_argument("--de-rise", type=float, default=DEFAULT.delta_e_rise, help="mean dE00 rise that flags (default %(default)s)")
@@ -24,10 +24,10 @@ def main(argv=None):
 
 
 def _analyze(args):
-    from .pipeline import analyze_file, compare
+    from .pipeline import analyze_path, compare
     from .report import render_report
     th = Thresholds(args.mtf_drop, args.de_rise)
-    results = [analyze_file(p) for p in args.images]
+    results = [analyze_path(p) for p in args.captures]
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(render_report(results, th))
     bad = 0
