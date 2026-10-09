@@ -15,6 +15,7 @@ def main(argv=None):
     an.add_argument("-o", "--output", default="report.html")
     an.add_argument("--mtf-drop", type=float, default=DEFAULT.mtf50_drop, help="MTF50 drop fraction that flags (default %(default)s)")
     an.add_argument("--de-rise", type=float, default=DEFAULT.delta_e_rise, help="mean dE00 rise that flags (default %(default)s)")
+    an.add_argument("--note", help="text shown under the report title, e.g. how the charts were displayed")
     args = ap.parse_args(argv)
     if args.cmd == "export-charts":
         for p in export_charts(args.outdir, args.dpi):
@@ -29,7 +30,7 @@ def _analyze(args):
     th = Thresholds(args.mtf_drop, args.de_rise)
     results = [analyze_path(p) for p in args.captures]
     with open(args.output, "w", encoding="utf-8") as f:
-        f.write(render_report(results, th))
+        f.write(render_report(results, th, note=args.note))
     bad = 0
     for r in results[1:]:
         for fl in compare(results[0], r, th):

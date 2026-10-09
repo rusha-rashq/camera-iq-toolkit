@@ -86,7 +86,7 @@ has the summary table, an MTF overlay and a tone curve of the grey patches.
 
 ## Verification
 
-Run `pytest` (125 tests). What is checked, and against what:
+Run `pytest` (126 tests). What is checked, and against what:
 
 **CIEDE2000.** All 34 test pairs from Sharma, Wu & Dalal (2005), as published (`tests/data/sharma2005.txt`),
 agree to 5·10⁻⁵ (the published precision), in both argument orders and in the vectorised path. sRGB↔Lab is
@@ -161,11 +161,22 @@ cycles/picture-height normalisation.
   white, so a non-D65 light shows up as white-balance error.
 - **Phone processing is in the measurement.** Sharpening, local tone mapping and noise reduction change
   MTF, SNR and ΔE00; sharpening shows up as MTF above 1 (the plot shows it). Results compare pipelines, not sensors.
-- **Cycles/mm needs a known chart size and distance.** It assumes the chart was printed at 100% (a chart
-  shown on a screen has no such scale) and it is a measure at the chart, so it falls as the camera moves
-  away: compare captures taken from the same distance. At a different distance or crop, only
+- **Cycles/mm needs a known chart size and distance.** It assumes the chart was printed at 100%. The
+  results in this README were shot off a screen, so they are in design units (see Results). It is also a
+  measure at the chart, so it falls as the camera moves away: compare captures taken from the same distance. At a different distance or crop, only
   cycles/pixel at equal resolution is comparable. Edges that end up under 1° from an image axis (camera rolled ~4–6° against the chart) produce a
   warning and unreliable MTF.
+- **The display limits what can be measured.** The chart in these results was shown on a MacBook Retina
+  screen (~9 pixels per mm). If a design mm is about one screen mm, the screen's own pixel aperture alone
+  would lower MTF by about 11% at 2.4 cycles/mm (sinc(2.4/9) = 0.89; my estimate, not measured), and its
+  pixel grid sets a hard cap near 4.5 cycles/mm. The 1× vs 2× comparison is therefore partly limited by
+  the screen, not only by the cameras, and the tele curve (which extends to about 3.8 cycles per design mm)
+  is the most affected. The display's brightness, white point and gamut likewise enter the colour numbers,
+  which measure phone plus screen together.
+- **Repeatability comes from a single pair of shots** (plus one failed close-range pair). It gives an
+  idea of the size of the scatter, not a distribution; the thresholds are not calibrated by it.
+- **Grey SNR is noisy.** It varied by 3.2 dB between two identical shots, so any SNR regression threshold
+  would have to be well above 3.2 dB. The tool currently has no SNR flag; SNR is reported only.
 - **Noise SNR** is from a single frame with plane removal; fine-scale texture or compression artefacts
   count as noise, and a noiseless synthetic frame reports >100 dB.
 - **8-bit only.** No RAW, 10-bit or HDR gain maps (the SDR base image is used). Out-of-gamut colours are clipped when converting
@@ -180,9 +191,15 @@ cycles/picture-height normalisation.
 
 Apple iPhone 15 Plus, main camera (26 mm equivalent) and 2× (52 mm), JPEG, Display P3 converted to sRGB. Edge
 and colour charts were shot separately and analysed as one capture per folder (`photos/<n>/edge.jpeg` +
-`colour.jpeg`). Chart scale assumes 1 chart unit = 1 mm. Baseline = `1-baseline`.
+`colour.jpeg`). Baseline = `1-baseline`.
 
-| Capture | Settings (edge shot) | px/mm | MTF50 (cy/mm) | MTF50 (cy/px) | Peak MTF | Mean ΔE00 | WB error | Grey SNR | Flags |
+**These charts were not printed.** They were photographed off a MacBook screen at the same display size
+for every capture. So "mm" below means the chart's **design units on screen**, not physical millimetres,
+and "cy/mm" is **cycles per design mm**: it compares these captures with each other, but it is not a
+physical resolution and depends on the display size and the camera-to-screen distance. Print the charts at 100%
+(see Use) if you want physical cycles/mm.
+
+| Capture | Settings (edge shot) | px per design mm | MTF50 (cy per design mm) | MTF50 (cy/px) | Peak MTF | Mean ΔE00 | WB error | Grey SNR | Flags |
 |---|---|---|---|---|---|---|---|---|---|
 | 1-baseline | 26 mm, ISO 80, 1/121 s | 5.63 | 2.35 | 0.417 | 1.43 | 3.22 | 0.85 | 22.9 dB | baseline |
 | 2-repeat | same | 5.67 | 2.31 (−1.8%) | 0.407 | 1.36 | 3.32 | 0.97 | 26.1 dB | none |
@@ -190,7 +207,7 @@ and colour charts were shot separately and analysed as one capture per folder (`
 | 4-dim | 26 mm, ISO 400, 1/60 s | 6.08 | 2.44 (+4.0%) | 0.402 | 1.25 | 2.99 | 2.01 | 20.5 dB | none |
 
 In cycles/pixel the tele capture is 19.7% below the baseline, only because it has fewer, larger pixels across the
-chart; in cycles/mm it is 7.6% above. The peak MTF of 1.25–1.58 means the iPhone's JPEG pipeline sharpens
+chart; in cycles per design mm it is 7.6% above. The peak MTF of 1.25–1.58 means the iPhone's JPEG pipeline sharpens
 strongly, which also raises MTF50: compare captures with each other, not with lens specifications. The
 tele and dim captures show a larger white-balance error (2.0–2.3 against 0.9–1.0), which could be a
 real colour shift or a change in the light between shots; not investigated. (ISO and exposure for the
@@ -200,7 +217,7 @@ colour shots differ from the edge shots, e.g. tele ISO 50 vs 32; the table gives
 
 | Shot distance | MTF50 baseline vs repeat | Notes |
 |---|---|---|
-| Far (chart frame ≈ 545 px wide) | −2.4% in cycles/px, −1.8% in cycles/mm; per edge +0.9%, −8.1%, −2.4%, +0.4% | all 4 edges measured on both shots; edge-to-edge spread 4–6% |
+| Far (chart frame ≈ 545 px wide) | −2.4% in cycles/px, −1.8% in cycles per design mm; per edge +0.9%, −8.1%, −2.4%, +0.4% | all 4 edges measured on both shots; edge-to-edge spread 4–6% |
 | Close (chart frame ≈ 1200 px wide) | −34% | **not a real difference**: 2 of 4 edges failed on the baseline and one edge on the repeat read 0.011 cy/px, so the means are over different, partly broken edges |
 
 For the close shots the horizontal edges gave absurd fitted angles (41°, −53°); the ROI crops showed a

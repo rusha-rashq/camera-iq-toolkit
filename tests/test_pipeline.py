@@ -201,3 +201,11 @@ def test_peak_mtf_shows_sharpening_overshoot():
     html = report.render_report([result("a", blur_sigma=1.2), pipeline.analyze_capture(load_capture_bytes(_png_bytes(sharp8)), "b")])
     assert ">1.25<" in html          # y-axis extends above 1
     assert "Peak MTF" in html and "MTF50 (cy/mm)" in html
+
+
+def test_report_note_is_shown_and_escaped(tmp_path):
+    p = tmp_path / "a.png"
+    Image.fromarray(scene(blur_sigma=0.8).srgb8).save(p)
+    out = tmp_path / "r.html"
+    assert main(["analyze", str(p), "-o", str(out), "--note", "mm are <design units>"]) == 0
+    assert "<strong>Note:</strong> mm are &lt;design units&gt;" in out.read_text()

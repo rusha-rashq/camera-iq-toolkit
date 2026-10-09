@@ -111,7 +111,7 @@ def _snr(v):
     return "–" if v is None else ("&gt;100 dB" if v > 100 else f"{v:.1f} dB")
 
 
-def render_report(results, thresholds=DEFAULT, title="Camera image quality report"):
+def render_report(results, thresholds=DEFAULT, title="Camera image quality report", note=None):
     """HTML string. results[0] is the baseline; every later capture is compared against it."""
     rows, base = [], results[0]
     for k, r in enumerate(results):
@@ -136,6 +136,7 @@ def render_report(results, thresholds=DEFAULT, title="Camera image quality repor
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{escape(title)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style></head><body><div class="viz">
 <h1>{escape(title)}</h1>
+{f'<p><strong>Note:</strong> {escape(note)}</p>' if note else ''}
 <p>Baseline: {escape(base.name)}. Flags: MTF50 (cycles/mm) down more than {100 * thresholds.mtf50_drop:g}%, or mean ΔE00 up more than {thresholds.delta_e_rise:g}.</p>
 <h2>Summary</h2>
 <table><thead><tr><th>Capture</th><th>Camera</th><th>MTF50 (cy/mm)</th><th>MTF50 (cy/px)</th><th>Peak MTF</th><th>Mean ΔE00</th><th>WB error (C*)</th><th>Grey SNR</th><th>Status</th></tr></thead>
