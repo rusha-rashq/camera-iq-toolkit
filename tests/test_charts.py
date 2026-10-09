@@ -58,4 +58,10 @@ def test_rois_and_patches():
     assert len(rois) == 4
     for x0, y0, x1, y1 in rois:
         roi = img[y0:y1, x0:x1, 0]
-        assert roi.min() < 40 and roi.max() > 200        # dark inside, paper outside, nothing else
+        assert roi.min() < 140 and roi.max() > 215        # dark inside, paper outside, nothing else
+
+
+def test_slanted_contrast_is_4_to_1():
+    ren = charts.render_linear(charts.slanted_chart(), 4.0)
+    centre, paper = ren[200, 200, 0], ren[200, 40, 0]
+    assert paper / centre == pytest.approx(4.0, rel=0.01)

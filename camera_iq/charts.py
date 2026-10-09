@@ -16,7 +16,11 @@ from .color import linear_to_srgb, srgb_to_linear
 
 FRAME = 8.0
 NOTCH = 3.0                     # side of the white notch, centred in the frame band at the top-left
-PAPER_SRGB = (235, 235, 235)
+# The slanted square follows ISO 12233's ~4:1 contrast (in linear reflectance, not black on white),
+# which avoids clipping and heavy sharpening: linear 0.8 paper vs 0.2 square. The frame is near-black.
+PAPER_LIN, SQUARE_LIN = 0.8, 0.2
+PAPER_SRGB = tuple(float(v) * 255 for v in linear_to_srgb([PAPER_LIN] * 3))
+SQUARE_SRGB = tuple(float(v) * 255 for v in linear_to_srgb([SQUARE_LIN] * 3))
 BLACK_SRGB = (10, 10, 10)
 
 # Design sRGB values, row-major 6x4. Neutrals are the bottom row.
@@ -45,7 +49,7 @@ class Chart:
 
 def slanted_chart():
     """100x100: one dark square rotated 5 degrees on light paper. Its four edges are the MTF targets."""
-    return Chart("slanted", (100.0, 100.0), squares=[((50.0, 50.0), 50.0, 5.0, BLACK_SRGB)])
+    return Chart("slanted", (100.0, 100.0), squares=[((50.0, 50.0), 50.0, 5.0, SQUARE_SRGB)])
 
 
 def colour_chart(cols=6, rows=4, patch=20.0, gap=4.0, margin=6.0):
@@ -70,25 +74,29 @@ def _fill(canvas, poly, rgb_lin, s):
     cv2.fillPoly(canvas, [pts], tuple(float(v) for v in rgb_lin), lineType=cv2.LINE_8, shift=4)
 
 
+def shapes(chart):
+    """Painter's-order list of (polygon in units, linear RGB) making up the chart."""
+    lin = lambda srgb: srgb_to_linear(np.asarray(srgb, float) / 255)
+    rect = lambda x0, y0, x1, y1: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    w, h = chart.size
+    out = [(rect(0, 0, w, h), lin(BLACK_SRGB)), (rect(*chart.inner), lin(PAPER_SRGB))]
+    for centre, side, ang, srgb in chart.squares:
+        out.append((_square_corners(centre, side, ang), lin(srgb)))
+    for i, box in enumerate(chart.patches):
+        out.append((rect(*box), srgb_to_linear(PATCH_SRGB[i])))
+    c = FRAME / 2
+    out.append((rect(c - NOTCH / 2, c - NOTCH / 2, c + NOTCH / 2, c + NOTCH / 2), lin(PAPER_SRGB)))
+    return out
+
+
 def render_linear(chart, px_per_unit=4.0, supersample=4):
     """Chart as linear-light RGB float32, shape (H, W, 3). Antialiased by box-averaging in linear light."""
     s = px_per_unit * supersample
     w, h = chart.size
     W, H = int(round(w * px_per_unit)), int(round(h * px_per_unit))
-    canvas = np.empty((H * supersample, W * supersample, 3), np.float32)
-    lin = lambda srgb: srgb_to_linear(np.asarray(srgb, float) / (255 if max(srgb) > 1 else 1))
-    canvas[:] = lin(BLACK_SRGB)
-
-    def rect(x0, y0, x1, y1, rgb):
-        _fill(canvas, [(x0, y0), (x1, y0), (x1, y1), (x0, y1)], rgb, s)
-
-    rect(*chart.inner, lin(PAPER_SRGB))
-    for centre, side, ang, srgb in chart.squares:
-        _fill(canvas, _square_corners(centre, side, ang), lin(srgb), s)
-    for i, box in enumerate(chart.patches):
-        rect(*box, srgb_to_linear(PATCH_SRGB[i]))
-    c = FRAME / 2
-    rect(c - NOTCH / 2, c - NOTCH / 2, c + NOTCH / 2, c + NOTCH / 2, lin(PAPER_SRGB))
+    canvas = np.zeros((H * supersample, W * supersample, 3), np.float32)
+    for poly, rgb in shapes(chart):
+        _fill(canvas, poly, rgb, s)
     return cv2.resize(canvas, (W, H), interpolation=cv2.INTER_AREA)
 
 
@@ -186,7 +194,10 @@ def detect_chart(image, chart, verify_px_per_unit=3.0, min_score=0.75):
         img = np.clip(img * 255 + 0.5, 0, 255).astype(np.uint8)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if img.ndim == 3 else img
     blur = cv2.GaussianBlur(gray, (0, 0), max(1.0, min(gray.shape) / 800))
-    _, dark = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    otsu, _ = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # The low-contrast slanted square can land on either side of the Otsu split, so also try
+    # stricter thresholds that keep only the frame.
+    darks = [(blur <= t).astype(np.uint8) * 255 for t in (otsu, otsu * 0.6, otsu * 0.35)]
 
     w, h = chart.size
     outer = [(0, 0), (w, 0), (w, h), (0, h)]
@@ -198,7 +209,7 @@ def detect_chart(image, chart, verify_px_per_unit=3.0, min_score=0.75):
 
     hyps = []
     min_area = 0.001 * gray.size
-    for q in _quads(dark, min_area):
+    for q in (q for dark in darks for q in _quads(dark, min_area)):
         for target in (outer, inner):
             for k in range(4):
                 dst = np.roll(np.array(target, np.float32), k, axis=0)   # wrap-around of quad corners
